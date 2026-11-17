@@ -754,6 +754,19 @@ def _build_client(config: HonchoClientConfig) -> "Honcho":
         # strip a trailing version segment from any base_url to avoid "/v3/v3/...".
         import re
         kwargs["base_url"] = re.sub(r"/v\d+/*$", "", base_url).rstrip("/")
+    # Build our own httpx client with trust_env disabled: Honcho traffic is
+    # tailnet-internal, and a long-lived process that inherits system proxies
+    # (trust_env=True is the SDK default) rides the proxy's connection pool —
+    # when the proxy recycles its tunnels, the client's pooled connections go
+    # zombie (CLOSE_WAIT) and every request black-holes until the 30s timeout
+    # (shikanime-labs/skills#627). The proxy env vars and macOS system proxy
+    # settings must never apply to this path.
+    try:
+        import httpx
+
+        kwargs["http_client"] = httpx.Client(trust_env=False, timeout=timeout)
+    except Exception:
+        logger.warning("Could not build a trust_env=False http client; falling back to the SDK default")
     _register_exit_close()
     return Honcho(**kwargs)
 
